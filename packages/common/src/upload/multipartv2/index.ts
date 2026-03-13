@@ -9,8 +9,10 @@ import { UploadTask, UploadConfig } from '../types'
 import { UploadContext, updateTotalIntoProgress } from '../common/context'
 import { Task, TaskQueue } from '../common/queue'
 import { initUploadConfig } from '../common/config'
-import { HostProgressKey, HostProvideTask } from '../common/host'
+import { HostProgressKey, RegionHostProvideTask, HostRetryTask } from '../common/host'
 import { TokenProgressKey, TokenProvideTask } from '../common/token'
+
+const COMPLETE_TASK_VIRTUAL_SIZE = 100
 
 export type MultipartUploadV2ProgressKey =
   | HostProgressKey
@@ -225,13 +227,13 @@ class CompletePartUploadTask implements Task {
   private updateProgress(percent: number, notify?: () => void) {
     if (this.context.progress.details.completeMultipartUpload == null) {
       this.context.progress.details.completeMultipartUpload = {
-        size: 0,
+        size: COMPLETE_TASK_VIRTUAL_SIZE,
         percent: 0,
         fromCache: false
       }
     }
 
-    this.context!.progress.details.completeMultipartUpload.size = 0
+    this.context!.progress.details.completeMultipartUpload.size = COMPLETE_TASK_VIRTUAL_SIZE
     this.context!.progress.details.completeMultipartUpload.percent = percent
     this.context!.progress.details.completeMultipartUpload.fromCache = false
     notify?.()
@@ -292,7 +294,7 @@ export const createMultipartUploadV2Task = (file: UploadFile, config: UploadConf
 
   const context = new MultipartUploadV2Context()
   const tokenProvideTask = new TokenProvideTask(context, normalizedConfig.tokenProvider)
-  const hostProvideTask = new HostProvideTask(
+  const hostProvideTask = new RegionHostProvideTask(
     context,
     configApis,
     normalizedConfig.protocol,
@@ -300,7 +302,9 @@ export const createMultipartUploadV2Task = (file: UploadFile, config: UploadConf
   )
 
   const initPartUploadTask = new InitPartUploadTask(context, uploadApis, file)
+  const initPartRetryTask = new HostRetryTask(context, initPartUploadTask)
   const completePartUploadTask = new CompletePartUploadTask(context, uploadApis, config.vars, file)
+  const completePartRetryTask = new HostRetryTask(context, completePartUploadTask)
 
   const mainQueue = new TaskQueue({
     logger: {
@@ -317,8 +321,6 @@ export const createMultipartUploadV2Task = (file: UploadFile, config: UploadConf
       prefix: 'MultipartUploadChildQueue'
     },
     concurrentLimit: 3,
-
-    // FIXME: 动态创建任务会导致任务进度倒退
     tasksCreator: async () => {
       const sliceResult = await file.slice(4 * 1024 * 1024)
       if (isErrorResult(sliceResult)) {
@@ -330,7 +332,7 @@ export const createMultipartUploadV2Task = (file: UploadFile, config: UploadConf
       }
 
       const tasks = sliceResult.result.map((blob, index) => (
-        new UploadPartTask(context, uploadApis, index + 1, file, blob)
+        new HostRetryTask(context, new UploadPartTask(context, uploadApis, index + 1, file, blob))
       ))
       return { result: tasks }
     }
@@ -339,9 +341,9 @@ export const createMultipartUploadV2Task = (file: UploadFile, config: UploadConf
   mainQueue.enqueue(
     tokenProvideTask,
     hostProvideTask,
-    initPartUploadTask,
+    initPartRetryTask,
     partQueue,
-    completePartUploadTask
+    completePartRetryTask
   )
 
   return {

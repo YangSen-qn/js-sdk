@@ -9,9 +9,11 @@ import { UploadConfig, UploadTask } from '../types'
 
 import { Task, TaskQueue } from '../common/queue'
 import { initUploadConfig } from '../common/config'
-import { HostProgressKey, HostProvideTask } from '../common/host'
+import { HostProgressKey, RegionHostProvideTask, HostRetryTask } from '../common/host'
 import { TokenProgressKey, TokenProvideTask } from '../common/token'
 import { UploadContext, updateTotalIntoProgress } from '../common/context'
+
+const COMPLETE_TASK_VIRTUAL_SIZE = 100
 
 export type MultipartUploadV1ProgressKey =
   | HostProgressKey
@@ -116,13 +118,13 @@ class MkfileTask implements Task {
   private updateProgress(percent: number, notify?: () => void) {
     if (this.context.progress.details.completeMultipartUpload == null) {
       this.context.progress.details.completeMultipartUpload = {
-        size: 0,
+        size: COMPLETE_TASK_VIRTUAL_SIZE,
         percent: 0,
         fromCache: false
       }
     }
 
-    this.context!.progress.details.completeMultipartUpload.size = 0
+    this.context!.progress.details.completeMultipartUpload.size = COMPLETE_TASK_VIRTUAL_SIZE
     this.context!.progress.details.completeMultipartUpload.percent = percent
     this.context!.progress.details.completeMultipartUpload.fromCache = false
     notify?.()
@@ -180,7 +182,7 @@ export const createMultipartUploadV1Task = (file: UploadFile, config: UploadConf
 
   const context = new MultipartUploadV1Context()
   const tokenProvideTask = new TokenProvideTask(context, normalizedConfig.tokenProvider)
-  const hostProvideTask = new HostProvideTask(
+  const hostProvideTask = new RegionHostProvideTask(
     context,
     configApis,
     normalizedConfig.protocol,
@@ -202,7 +204,6 @@ export const createMultipartUploadV1Task = (file: UploadFile, config: UploadConf
       prefix: 'MultipartUploadChildQueue'
     },
     concurrentLimit: 1, // 此接口只能串行
-    // FIXME 动态创建任务会导致任务进度倒退
     tasksCreator: async () => {
       const sliceResult = await file.slice(4 * 1024 * 1024)
       if (isErrorResult(sliceResult)) {
@@ -214,19 +215,20 @@ export const createMultipartUploadV1Task = (file: UploadFile, config: UploadConf
       }
 
       const tasks = sliceResult.result.map((blob, index) => (
-        new MkblkTask(context, uploadApis, blob, index)
+        new HostRetryTask(context, new MkblkTask(context, uploadApis, blob, index))
       ))
       return { result: tasks }
     }
   })
 
   const mkfileTask = new MkfileTask(context, uploadApis, normalizedConfig.vars, file)
+  const mkfileRetryTask = new HostRetryTask(context, mkfileTask)
 
   mainQueue.enqueue(
     tokenProvideTask,
     hostProvideTask,
     putQueue,
-    mkfileTask
+    mkfileRetryTask
   )
 
   return {
