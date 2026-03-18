@@ -96,13 +96,15 @@ export function useUpload(file: File) {
             'x-qn-meta-test': 'tt',
             'x-qn-meta-test1': '222',
             'x-qn-meta-test2': '333'
-          }
+          },
+          mimeType: 'text/txt'
         },
         {
           // checkByMD5: true,
           checkByServer: true,
           chunkSize: 2,
           concurrentRequestLimit: 3,
+          forceDirect: true,
           debugLogLevel: 'INFO',
           uphost: uphost && uphost.split(',')
         }

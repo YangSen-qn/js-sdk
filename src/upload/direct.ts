@@ -10,7 +10,13 @@ export default class Direct extends Base {
     this.logger.info('start run Direct.')
 
     const formData = new FormData()
-    formData.append('file', this.file)
+    if (this.putExtra.mimeType) {
+      // 通过 Blob.slice 设置 file part 的 Content-Type 为指定的 mimeType
+      const fileBlob = this.file.slice(0, this.file.size, this.putExtra.mimeType)
+      formData.append('file', fileBlob, this.putExtra.fname || this.file.name)
+    } else {
+      formData.append('file', this.file)
+    }
     formData.append('token', this.token)
     if (this.key != null) {
       formData.append('key', this.key)
