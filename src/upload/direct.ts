@@ -15,7 +15,7 @@ export default class Direct extends Base {
       const fileBlob = this.file.slice(0, this.file.size, this.putExtra.mimeType)
       formData.append('file', fileBlob, this.putExtra.fname || this.file.name)
     } else {
-      formData.append('file', this.file)
+      formData.append('file', this.file, this.putExtra.fname || this.file.name)
     }
     formData.append('token', this.token)
     if (this.key != null) {
