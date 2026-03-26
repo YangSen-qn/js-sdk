@@ -8,6 +8,7 @@ import { UploadTask, UploadConfig } from '../types'
 
 import { UploadContext, updateTotalIntoProgress } from '../common/context'
 import { Task, TaskQueue } from '../common/queue'
+import { RetryTask } from '../common/queue/retry'
 import { initUploadConfig } from '../common/config'
 import { HostProgressKey, RegionHostProvideTask, HostRetryTask } from '../common/host'
 import { TokenProgressKey, TokenProvideTask } from '../common/token'
@@ -32,6 +33,7 @@ export class MultipartUploadV2Context extends UploadContext<MultipartUploadV2Pro
 
 class InitPartUploadTask implements Task {
   private abort: HttpAbortController | null = null
+
   constructor(
     private context: MultipartUploadV2Context,
     private uploadApis: UploadApis,
@@ -130,6 +132,7 @@ class InitPartUploadTask implements Task {
 
 class UploadPartTask implements Task {
   private abort: HttpAbortController | null = null
+
   constructor(
     private context: MultipartUploadV2Context,
     private uploadApis: UploadApis,
@@ -212,6 +215,7 @@ class UploadPartTask implements Task {
 
 class CompletePartUploadTask implements Task {
   private abort: HttpAbortController | null = null
+
   constructor(
     private context: MultipartUploadV2Context,
     private uploadApis: UploadApis,
@@ -301,10 +305,12 @@ export const createMultipartUploadV2Task = (file: UploadFile, config: UploadConf
     normalizedConfig.uploadHosts
   )
 
-  const initPartUploadTask = new InitPartUploadTask(context, uploadApis, file)
-  const initPartRetryTask = new HostRetryTask(context, initPartUploadTask)
-  const completePartUploadTask = new CompletePartUploadTask(context, uploadApis, config.vars, file)
-  const completePartRetryTask = new HostRetryTask(context, completePartUploadTask)
+  let initPartUploadTask: Task = new InitPartUploadTask(context, uploadApis, file)
+  initPartUploadTask = new RetryTask(initPartUploadTask)
+  initPartUploadTask = new HostRetryTask(context, initPartUploadTask)
+  let completePartUploadTask: Task = new CompletePartUploadTask(context, uploadApis, config.vars, file)
+  completePartUploadTask = new RetryTask(completePartUploadTask)
+  completePartUploadTask = new HostRetryTask(context, completePartUploadTask)
 
   const mainQueue = new TaskQueue({
     logger: {
@@ -331,19 +337,22 @@ export const createMultipartUploadV2Task = (file: UploadFile, config: UploadConf
         return sliceResult
       }
 
-      const tasks = sliceResult.result.map((blob, index) => (
-        new HostRetryTask(context, new UploadPartTask(context, uploadApis, index + 1, file, blob))
-      ))
+      const tasks = sliceResult.result.map((blob, index) => {
+        let t: Task = new UploadPartTask(context, uploadApis, index + 1, file, blob)
+        t = new RetryTask(t)
+        t = new HostRetryTask(context, t)
+        return t
+      })
       return { result: tasks }
     }
   })
 
   mainQueue.enqueue(
-    tokenProvideTask,
-    hostProvideTask,
-    initPartRetryTask,
+    new RetryTask(tokenProvideTask),
+    new RetryTask(hostProvideTask),
+    initPartUploadTask,
     partQueue,
-    completePartRetryTask
+    completePartUploadTask
   )
 
   return {

@@ -8,6 +8,7 @@ import { UploadApis, ConfigApis, MkblkData } from '../../api'
 import { UploadConfig, UploadTask } from '../types'
 
 import { Task, TaskQueue } from '../common/queue'
+import { RetryTask } from '../common/queue/retry'
 import { initUploadConfig } from '../common/config'
 import { HostProgressKey, RegionHostProvideTask, HostRetryTask } from '../common/host'
 import { TokenProgressKey, TokenProvideTask } from '../common/token'
@@ -189,6 +190,10 @@ export const createMultipartUploadV1Task = (file: UploadFile, config: UploadConf
     normalizedConfig.uploadHosts
   )
 
+  let mkfileTask: Task = new MkfileTask(context, uploadApis, normalizedConfig.vars, file)
+  mkfileTask = new RetryTask(mkfileTask)
+  mkfileTask = new HostRetryTask(context, mkfileTask)
+
   const mainQueue = new TaskQueue({
     logger: {
       level: normalizedConfig.logLevel,
@@ -214,21 +219,21 @@ export const createMultipartUploadV1Task = (file: UploadFile, config: UploadConf
         return sliceResult
       }
 
-      const tasks = sliceResult.result.map((blob, index) => (
-        new HostRetryTask(context, new MkblkTask(context, uploadApis, blob, index))
-      ))
+      const tasks = sliceResult.result.map((blob, index) => {
+        let t: Task = new MkblkTask(context, uploadApis, blob, index)
+        t = new RetryTask(t)
+        t = new HostRetryTask(context, t)
+        return t
+      })
       return { result: tasks }
     }
   })
 
-  const mkfileTask = new MkfileTask(context, uploadApis, normalizedConfig.vars, file)
-  const mkfileRetryTask = new HostRetryTask(context, mkfileTask)
-
   mainQueue.enqueue(
-    tokenProvideTask,
-    hostProvideTask,
+    new RetryTask(tokenProvideTask),
+    new RetryTask(hostProvideTask),
     putQueue,
-    mkfileRetryTask
+    mkfileTask
   )
 
   return {
