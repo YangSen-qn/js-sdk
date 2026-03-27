@@ -220,6 +220,7 @@ export class TaskQueue implements Task {
       }
 
       this.logger.info(`Worker ${workerId} processing task`)
+      // eslint-disable-next-line no-await-in-loop
       const result = await task.process(() => this.handleProgress())
       this.logger.info(`Worker ${workerId} task resolved: ${JSON.stringify(result)}`)
 

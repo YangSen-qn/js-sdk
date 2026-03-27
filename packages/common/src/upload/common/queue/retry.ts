@@ -28,7 +28,7 @@ export class RetryTask implements Task {
   ) {
     this.maxRetries = options?.maxRetries ?? 1
     this.retryDelay = options?.retryDelay ?? 500
-    this.shouldRetry = options?.shouldRetry ?? ((error) => error.name === 'NetworkError')
+    this.shouldRetry = options?.shouldRetry ?? (error => error.name === 'NetworkError')
   }
 
   async cancel(): Promise<Result> {
@@ -38,6 +38,7 @@ export class RetryTask implements Task {
   async process(notice: () => void): Promise<Result> {
     let lastError: UploadError | undefined
 
+    /* eslint-disable no-await-in-loop */
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       if (attempt > 0) {
         await delay(this.retryDelay)
@@ -57,6 +58,7 @@ export class RetryTask implements Task {
         }
       }
     }
+    /* eslint-enable no-await-in-loop */
 
     return { error: lastError! }
   }
